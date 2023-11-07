@@ -20,7 +20,7 @@
 #include <Winsock2.h>
 #endif
 
-#include "GstCamera.h"
+#include "GstCamera.hh"
 #include <gst/app/gstappsrc.h>
 
 #include <math.h>
@@ -28,7 +28,7 @@
 #include <iostream>
 #include <thread>
 #include <time.h>
-#include "Int32.pb.h"
+// #include "Int32.pb.h"
 #include "gz/sensors/DepthCameraSensor.hh"
 #include "gz/sim/components/Camera.hh"
 
@@ -36,19 +36,19 @@
 
 using namespace std;
 using namespace gz;
+using namespace sim;
+using namespace systems;
 using namespace cv;
-
-GZ_REGISTER_SENSOR_PLUGIN(GstCameraPlugin)
 
 
 static void* start_thread(void* param) {
-  GstCameraPlugin* plugin = <GstCameraPlugin*>param;
+  GstCamera* plugin = <GstCamera*>param;
   plugin->startGstThread();
   return nullptr;
 }
 
 /////////////////////////////////////////////////
-void GstCameraPlugin::startGstThread() {
+void GstCamera::startGstThread() {
   gst_init(nullptr, nullptr);
 
   this->gst_loop = g_main_loop_new(nullptr, FALSE);
@@ -141,7 +141,7 @@ void GstCameraPlugin::startGstThread() {
 }
 
 /////////////////////////////////////////////////
-void GstCameraPlugin::stopGstThread()
+void GstCamera::stopGstThread()
 {
   if(this->gst_loop) {
     g_main_loop_quit(this->gst_loop);
@@ -149,13 +149,13 @@ void GstCameraPlugin::stopGstThread()
 }
 
 /////////////////////////////////////////////////
-GstCameraPlugin::GstCameraPlugin()
-: SensorPlugin(), width(0), height(0), depth(0), gst_loop(nullptr), source(nullptr), mIsActive(false)
+GstCamera::GstCamera()
+: gz::sim::System, width(0), height(0), depth(0), gst_loop(nullptr), source(nullptr), mIsActive(false)
 {
 }
 
 /////////////////////////////////////////////////
-GstCameraPlugin::~GstCameraPlugin()
+GstCamera::~GstCamera()
 {
   this->parentSensor.reset();
   this->camera.reset();
@@ -165,7 +165,7 @@ GstCameraPlugin::~GstCameraPlugin()
 }
 
 /////////////////////////////////////////////////
-void GstCameraPlugin::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
+void GstCamera::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
   const EntityComponentManager &_ecm)
 {
   if (!sensor)
@@ -175,7 +175,7 @@ void GstCameraPlugin::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
 
   if (!this->parentSensor)
   {
-    gzerr << "GstCameraPlugin requires a CameraSensor.\n";
+    gzerr << "GstCamera requires a CameraSensor.\n";
 #if GAZEBO_MAJOR_VERSION >= 7
     if (std::dynamic_pointer_cast<sensors::DepthCameraSensor>(sensor))
 #else
@@ -188,7 +188,7 @@ void GstCameraPlugin::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
 
   if (!this->parentSensor)
   {
-    gzerr << "GstCameraPlugin not attached to a camera sensor\n";
+    gzerr << "GstCamera not attached to a camera sensor\n";
     return;
   }
 
@@ -239,14 +239,13 @@ void GstCameraPlugin::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
 //   node_handle_ = gz::transport::NodePtr(new transport::Node());
 //   node_handle_->Init(namespace_);
 
-// TODO (frede791): Check if and how we can replace this...
-  // Listen to Gazebo topic
-//   mVideoSub = node_handle_->Subscribe<msgs::Int>(mTopicName, &GstCameraPlugin::cbVideoStream, this);
+// Listen to Gazebo topic
+//   mVideoSub = node_handle_->Subscribe<msgs::Int>(mTopicName, &GstCamera::cbVideoStream, this);
 
-  components::Camera *cameraComponent = nullptr;
-  if(_ecm.EntityByComponents(components::Camera()) != kNullEntity){
-	Entity cameraEntity = _ecm.EntityByComponents(components::Camera());
-	cameraStream = _ecm.Component<components::Camera>(cameraEntity);
+  gz::components::Camera *cameraComponent = nullptr;
+  if(_ecm.EntityByComponents(gz::components::Camera()) != gz::sim::v7::kNullEntity){
+	gz::sim::Entity cameraEntity = _ecm.EntityByComponents(gz::components::Camera());
+	cameraStream = _ecm.Component<gz::components::Camera>(cameraEntity);
   }
   int enable = cameraStream->Data();
   if(enable)
@@ -260,7 +259,7 @@ void GstCameraPlugin::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
 }
 
 /////////////////////////////////////////////////
-// void GstCameraPlugin::cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg)
+// void GstCamera::cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg)
 // {
 //   gzwarn << "Video Streaming callback: " << _msg->data() << "\n";
 //   int enable = _msg->data();
@@ -271,11 +270,11 @@ void GstCameraPlugin::Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
 // }
 
 /////////////////////////////////////////////////
-void GstCameraPlugin::startStreaming()
+void GstCamera::startStreaming()
 {
   if(!mIsActive) {
     this->newFrameConnection = this->camera->ConnectNewImageFrame(
-        boost::bind(&GstCameraPlugin::OnNewFrame, this, _1, this->width,
+        boost::bind(&GstCamera::OnNewFrame, this, _1, this->width,
 			this->height, this->depth, this->format));
 
     this->parentSensor->SetActive(true);
@@ -288,7 +287,7 @@ void GstCameraPlugin::startStreaming()
 }
 
 /////////////////////////////////////////////////
-void GstCameraPlugin::stopStreaming()
+void GstCamera::stopStreaming()
 {
   if(mIsActive) {
     stopGstThread();
@@ -304,7 +303,7 @@ void GstCameraPlugin::stopStreaming()
 }
 
 /////////////////////////////////////////////////
-void GstCameraPlugin::OnNewFrame(const unsigned char * image,
+void GstCamera::OnNewFrame(const unsigned char * image,
                               unsigned int width,
                               unsigned int height,
                               unsigned int depth,
@@ -351,3 +350,6 @@ void GstCameraPlugin::OnNewFrame(const unsigned char * image,
     g_main_loop_quit(this->gst_loop);
   }
 }
+
+GZ_ADD_PLUGIN(GstCamera, System)
+GZ_ADD_PLUGIN_ALIAS(GstCamera, "gz::sim::systems::GstCamera")

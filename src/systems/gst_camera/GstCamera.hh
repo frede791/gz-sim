@@ -17,25 +17,34 @@
 #pragma once
 
 #include <string>
+#include <iostream>
 #include <mutex>
 
-#include "gz/common/Plugin.hh"
-#include "gz/common/common.hh"
-#include "gz/sensors/CameraSensor.hh"
-#include "gz/gazebo.hh"
-#include "gz/rendering/Camera.hh"
-#include "gz/util/system.hh"
-#include "gz/transport/transport.hh"
-#include "gz/msgs/msgs.hh"
+// #include "gz/common/Plugin.hh"
+#include "gz/utils.hh"
+// #include "gz/gazebo.hh"
+// #include "gz/util/system.hh"
+#include "gz/transport.hh"
+#include "gz/msgs.hh"
 #include "gz/sim/Link.hh"
 #include "gz/sim/Model.hh"
 #include "gz/sim/Util.hh"
+#include <gz/sim/System.hh>
+#include <gz/rendering/Scene.hh>
+#include "gz/rendering/Camera.hh"
 
+#include <gz/sensors/Noise.hh>
+#include <gz/sensors/CameraSensor.hh>
 #include <gst/gst.h>
+
 namespace gz
 {
+namespace sim
+{
+namespace systems
+{
 /**
- * @class GstCameraPlugin
+ * @class GstCamera
  * A Gazebo plugin that can be attached to a camera and then streams the video data using gstreamer.
  * It streams to a configurable UDP IP and UDP Port, defaults are respectively 127.0.0.1 and 5600.
  *
@@ -43,14 +52,18 @@ namespace gz
  * gst-launch-1.0  -v udpsrc port=5600 caps='application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264' \
  *  ! rtph264depay ! avdec_h264 ! videoconvert ! autovideosink fps-update-interval=1000 sync=false
  */
-class GAZEBO_VISIBLE GstCameraPlugin : public SensorPlugin
-{
-  public: GstCameraPlugin();
 
-  public: virtual ~GstCameraPlugin();
+class GstCamera:
+  public System
+{
+  /// \brief Constructor
+  public: GstCamera();
+
+  /// \brief Destructor
+  public: virtual ~GstCamera();
 
   public: virtual void Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
-    const EntityComponentManager &_ecm);
+    gz::sim::EntityComponentManager &_ecm);
 
   public: virtual void OnNewFrame(const unsigned char *image,
     unsigned int width, unsigned int height,
@@ -60,27 +73,40 @@ class GAZEBO_VISIBLE GstCameraPlugin : public SensorPlugin
   public: void stopGstThread();
   public: void gstCallback(GstElement *appsrc);
 
-//   public: void cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg); //CHECK
+//   public: void cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg);
   private: void startStreaming();
   private: void stopStreaming();
 
-  protected: unsigned int width, height, depth;
-  float rate;
+  /// \brief Camera width
+  protected: unsigned int width = 0.0;
+
+  /// \brief Camera height
+  protected: unsigned int height = 0.0;
+
+  /// \brief Camera depth
+  protected: unsigned int depth = 0.0;
+
+  public: float rate;
+
   protected: std::string format;
 
-  protected:
-    std::string udpHost;
-    int udpPort;
-    bool useRtmp;
-    std::string rtmpLocation;
-    bool useCuda;
+  protected: std::string udpHost;
+
+  protected: int udpPort;
+
+  protected: bool useRtmp;
+
+  protected: std::string rtmpLocation;
+
+  protected: bool useCuda;
 
   protected: sensors::CameraSensorPtr parentSensor;
+
   protected: rendering::CameraPtr camera;
 
-  private: event::ConnectionPtr newFrameConnection;
+  private: gz::common::ConnectionPtr newFrameConnection;
 
-  private: transport::NodePtr node_handle_;
+  // private: transport::NodePtr node_handle_;
   private: std::string namespace_;
 
 //   private: transport::SubscriberPtr mVideoSub; //CHECK
@@ -88,8 +114,10 @@ class GAZEBO_VISIBLE GstCameraPlugin : public SensorPlugin
   private: const std::string mTopicName = "~/video_stream";
   private: bool mIsActive;
 
-  GMainLoop *gst_loop;
-  GstElement *source;
+  public: GMainLoop *gst_loop;
+  public: GstElement *source;
 };
 
 } /* namespace gazebo */
+}
+}
