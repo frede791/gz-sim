@@ -27,9 +27,11 @@
 #include "gz/transport.hh"
 #include "gz/msgs.hh"
 #include "gz/sim/Link.hh"
-#include "gz/sim/Model.hh"
-#include "gz/sim/Util.hh"
 #include <gz/sim/System.hh>
+#include "gz/sim/Sensor.hh"
+#include "gz/sim/rendering/SceneManager.hh"
+#include "gz/sim/rendering/MarkerManager.hh"
+#include "gz/sim/components/ParentEntity.hh"
 #include <gz/rendering/Scene.hh>
 #include "gz/rendering/Camera.hh"
 
@@ -43,6 +45,10 @@ namespace sim
 {
 namespace systems
 {
+
+// Forward declaration
+// class GstCameraPrivate;
+
 /**
  * @class GstCamera
  * A Gazebo plugin that can be attached to a camera and then streams the video data using gstreamer.
@@ -54,70 +60,91 @@ namespace systems
  */
 
 class GstCamera:
-  public System
+  public System,
+  public ISystemConfigure
 {
-  /// \brief Constructor
-  public: GstCamera();
+	// public: components::ParentEntity *sensor_parent;
+	// protected: rendering::CameraPtr camera;
+	// public: GMainLoop *gst_loop;
+	/// \brief Constructor
+	public: GstCamera();
 
-  /// \brief Destructor
-  public: virtual ~GstCamera();
+	/// \brief Destructor
+	public: virtual ~GstCamera();
 
-  public: virtual void Load(sensors::SensorPtr sensor, sdf::ElementPtr sdf,
-    gz::sim::EntityComponentManager &_ecm);
+	//Documentation inherited
+	public: void Configure(const Entity &_entity,
+							const std::shared_ptr<const sdf::Element> &_sdf,
+							EntityComponentManager &_ecm,
+							EventManager &) override;
 
-  public: virtual void OnNewFrame(const unsigned char *image,
-    unsigned int width, unsigned int height,
-	unsigned int depth, const std::string &format);
+	public: virtual void OnNewFrame(const void* image,
+	unsigned int w, unsigned int h, unsigned int d, const std::string &format);
 
-  public: void startGstThread();
-  public: void stopGstThread();
-  public: void gstCallback(GstElement *appsrc);
+	public: void startGstThread();
+	public: void stopGstThread();
+	public: void gstCallback(GstElement *appsrc);
 
-//   public: void cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg);
-  private: void startStreaming();
-  private: void stopStreaming();
+	//   public: void cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg);
+	private: void startStreaming();
+	private: void stopStreaming();
 
-  /// \brief Camera width
-  protected: unsigned int width = 0.0;
+	/// \brief Sensor interface
+	public: Sensor sensor{kNullEntity};
 
-  /// \brief Camera height
-  protected: unsigned int height = 0.0;
+	/// \brief Camera width
+	public: unsigned int width = 0;
 
-  /// \brief Camera depth
-  protected: unsigned int depth = 0.0;
+	/// \brief Camera height
+	public: unsigned int height = 0;
+	public: unsigned int depth = 0;
 
-  public: float rate;
+	public: float rate;
 
-  protected: std::string format;
+	public: std::string frameformat;
 
-  protected: std::string udpHost;
+	public: std::string udpHost;
 
-  protected: int udpPort;
+	public: int udpPort;
 
-  protected: bool useRtmp;
+	public: bool useRtmp;
 
-  protected: std::string rtmpLocation;
+	public: std::string rtmpLocation;
 
-  protected: bool useCuda;
+	public: bool useCuda;
 
-  protected: sensors::CameraSensorPtr parentSensor;
+    /// \brief Pointer to the camera being recorded
+    public: rendering::CameraPtr camera{nullptr};
 
-  protected: rendering::CameraPtr camera;
+    /// \brief Pointer to the 3D scene
+    public: rendering::ScenePtr scene{nullptr};
 
-  private: gz::common::ConnectionPtr newFrameConnection;
+    /// \brief Image from user camera
+    public: rendering::Image cameraImage;
 
-  // private: transport::NodePtr node_handle_;
-  private: std::string namespace_;
+	/// \brief Scene manager
+    public: SceneManager sceneManager;
 
-//   private: transport::SubscriberPtr mVideoSub; //CHECK
-  private: pthread_t mThreadId;
-  private: const std::string mTopicName = "~/video_stream";
-  private: bool mIsActive;
+	private: common::ConnectionPtr newFrameConnection;
 
-  public: GMainLoop *gst_loop;
-  public: GstElement *source;
+	public: components::ParentEntity *sensor_parent;
+
+	// private: transport::NodePtr node_handle_;
+	private: std::string namespace_;
+
+	//   private: transport::SubscriberPtr mVideoSub; //CHECK
+	private: pthread_t mThreadId;
+	private: const std::string mTopicName = "~/video_stream";
+	private: bool mIsActive = false;
+
+	public: GMainLoop *gst_loop = nullptr;
+	public: GstElement *gst_source = nullptr;
+
+	/// \brief Copy of the sdf configuration used for this plugin
+  	public: sdf::ElementPtr sdfConfig;
+
+	private: std::unique_ptr<GstCamera> dataPtr;
 };
-
 } /* namespace gazebo */
 }
 }
