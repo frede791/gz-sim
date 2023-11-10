@@ -29,7 +29,6 @@
 #include "gz/sim/Link.hh"
 #include <gz/sim/System.hh>
 #include "gz/sim/Sensor.hh"
-#include "gz/sim/rendering/SceneManager.hh"
 #include "gz/sim/rendering/MarkerManager.hh"
 #include "gz/sim/components/ParentEntity.hh"
 #include <gz/rendering/Scene.hh>
@@ -61,7 +60,8 @@ namespace systems
 
 class GstCamera:
   public System,
-  public ISystemConfigure
+  public ISystemConfigure,
+  public ISystemPostUpdate
 {
 	// public: components::ParentEntity *sensor_parent;
 	// protected: rendering::CameraPtr camera;
@@ -76,21 +76,26 @@ class GstCamera:
 	public: void Configure(const Entity &_entity,
 							const std::shared_ptr<const sdf::Element> &_sdf,
 							EntityComponentManager &_ecm,
-							EventManager &) override;
+							EventManager &_eventMgr) override;
+
+	    /// Documentation inherited
+    public: void PostUpdate(const UpdateInfo &_info,
+                const EntityComponentManager &_ecm) override;
+
+	public: void cbVideoStream(const std::shared_ptr<const msgs::Int32> &_msg);
 
 	public: virtual void OnNewFrame(const void* image,
-	unsigned int w, unsigned int h, unsigned int d, const std::string &format);
+		unsigned int w, unsigned int h, unsigned int d, const std::string &format);
 
 	public: void startGstThread();
 	public: void stopGstThread();
 	public: void gstCallback(GstElement *appsrc);
 
-	//   public: void cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg);
 	private: void startStreaming();
 	private: void stopStreaming();
 
-	/// \brief Sensor interface
-	public: Sensor sensor{kNullEntity};
+	// /// \brief Sensor interface
+	// public: Sensor sensor{kNullEntity};
 
 	/// \brief Camera width
 	public: unsigned int width = 0;
@@ -113,21 +118,42 @@ class GstCamera:
 
 	public: bool useCuda;
 
+	/// \brief Name of the camera
+  	public: std::string cameraName;
+
+	/// \brief Transport node
+  	public: transport::Node node;
+
+	/// \brief Current simulation time.
+	public: std::chrono::steady_clock::duration simTime{0};
+
     /// \brief Pointer to the camera being recorded
     public: rendering::CameraPtr camera{nullptr};
 
     /// \brief Pointer to the 3D scene
     public: rendering::ScenePtr scene{nullptr};
 
+	/// \brief Pointer to the event manager
+  	public: EventManager *eventMgr = nullptr;
+
     /// \brief Image from user camera
     public: rendering::Image cameraImage;
-
-	/// \brief Scene manager
-    public: SceneManager sceneManager;
 
 	private: common::ConnectionPtr newFrameConnection;
 
 	public: components::ParentEntity *sensor_parent;
+
+	/// \brief Camera entity.
+  	public: Entity entity;
+
+	/// \brief Name of service for recording video NECESSARY?????
+  	public: std::string service;
+
+	/// \brief Marker manager
+	public: MarkerManager markerManager;
+
+	/// \brief Topic that the sensor publishes to
+	public: std::string sensorTopic;
 
 	// private: transport::NodePtr node_handle_;
 	private: std::string namespace_;
@@ -143,8 +169,11 @@ class GstCamera:
 	/// \brief Copy of the sdf configuration used for this plugin
   	public: sdf::ElementPtr sdfConfig;
 
+
+
+    /// \brief Private data pointer
 	private: std::unique_ptr<GstCamera> dataPtr;
 };
-} /* namespace gazebo */
+}
 }
 }

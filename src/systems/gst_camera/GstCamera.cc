@@ -33,15 +33,31 @@
 #include "gz/sim/Util.hh"
 #include "gz/sim/Sensor.hh"
 #include "gz/sim/EntityComponentManager.hh"
+
 #include "gz/sim/components/Camera.hh"
 #include "gz/sim/components/Name.hh"
+#include "gz/sim/components/Model.hh"
+#include "gz/sim/components/ParentEntity.hh"
+#include "gz/sim/components/World.hh"
+
 #include <gz/plugin/Register.hh>
 #include <gz/transport/Node.hh>
+
 #include <sdf/sdf.hh>
+
+#include "gz/sim/rendering/RenderUtil.hh"
+#include "gz/sim/rendering/Events.hh"
+#include "gz/sim/rendering/MarkerManager.hh"
+
+#include <gz/rendering/Camera.hh>
+#include <gz/rendering/RenderEngine.hh>
 #include <gz/rendering/RenderingIface.hh>
-#include <sdf/Camera.hh>
+#include <gz/rendering/Scene.hh>
+
+// #include <sdf/Camera.hh>
 
 #include <opencv2/opencv.hpp>
+#include <gz/msgs/int32_v.pb.h>
 
 using namespace std;
 using namespace gz;
@@ -95,7 +111,7 @@ void GstCamera::startGstThread() {
 	GstElement* payloader;
 	GstElement* sink;
 
-	if (useRtmp) {
+	if (this->useRtmp) {
 		payloader = gst_element_factory_make("flvmux", nullptr);
 		sink = gst_element_factory_make("rtmpsink", nullptr);
 		g_object_set(G_OBJECT(sink), "location", this->rtmpLocation.c_str(),
@@ -170,16 +186,6 @@ GstCamera::~GstCamera()
 	}
 }
 
-/////////////////////////////////////////////////
-// void GstCamera::cbVideoStream(const boost::shared_ptr<const msgs::Int> &_msg)
-// {
-//   gzwarn << "Video Streaming callback: " << _msg->data() << "\n";
-//   int enable = _msg->data();
-//   if(enable)
-//     startStreaming();
-//   else
-//     stopStreaming();
-// }
 
 /////////////////////////////////////////////////
 void GstCamera::startStreaming()
@@ -188,8 +194,6 @@ void GstCamera::startStreaming()
 		this->newFrameConnection = this->camera->ConnectNewImageFrame(
 			std::bind(&GstCamera::OnNewFrame,this, std::placeholders::_1, this->width, //CHECK THIS
 			this->height, this->depth, this->frameformat));
-
-		// this->sensor_parent->SetActive(true);
 
 		/* start the gstreamer event loop */
 		pthread_create(&mThreadId, NULL, start_thread, this);
@@ -221,8 +225,58 @@ void GstCamera::OnNewFrame(const void* image,
 							  unsigned int d,
 							  const std::string &format)
 {
+
+	if (!this->scene)
+	{
+		this->scene = rendering::sceneFromFirstRenderEngine();
+		this->markerManager.SetTopic(this->sensorTopic + "/marker");
+		this->markerManager.Init(this->scene);
+	}
+
+	// return if scene not ready or no sensors available.
+	if (!this->scene->IsInitialized() ||
+		this->scene->SensorCount() == 0)
+	{
+		return;
+	}
+
+	// get camera
+	if (!this->camera)
+	{
+		auto sensor = this->scene->SensorByName(this->cameraName);
+		if (!sensor)
+		{
+		gzerr << "Unable to find sensor: " << this->cameraName
+				<< std::endl;
+		return;
+		}
+		this->camera = std::dynamic_pointer_cast<rendering::Camera>(sensor);
+		if (!this->camera)
+		{
+		gzerr << "Sensor: " << this->cameraName << " is not a camera"
+				<< std::endl;
+		return;
+		}
+
+		return;
+	}
+
+	this->markerManager.SetSimTime(this->simTime);
+  	this->markerManager.Update();
+
+	this->width = this->camera->ImageWidth();
+	this->height = this->camera->ImageHeight();
+	this->frameformat = this->camera->ImageFormat();
+	this->depth = d;
+	this->rate = 60.0;
+
 	// this->camera->Capture(img);
-	this->cameraImage = this->camera->CreateImage();
+    if (this->cameraImage.Width() != width ||
+        this->cameraImage.Height() != height)
+    {
+      this->cameraImage = this->camera->CreateImage();
+    }
+
 
 	// Alloc buffer
 	const guint size = w * h * 1.5;
@@ -259,101 +313,136 @@ void GstCamera::OnNewFrame(const void* image,
 	}
 }
 
+void GstCamera::cbVideoStream(const std::shared_ptr<const gz::msgs::Int32> &_msg)
+{
+	gzwarn << "Video Streaming callback: " << _msg->data() << "\n";
+	int enable = _msg->data();
+	if(enable)
+		startStreaming();
+	else
+		stopStreaming();
+}
+
+
 void GstCamera::Configure(const Entity &_entity,
                     const std::shared_ptr<const sdf::Element> &_sdf,
                     EntityComponentManager &_ecm,
-                    EventManager &)
+                    EventManager &_eventMgr)
 {
-	this->dataPtr->sensor = Sensor(_entity);
-	if(!this->dataPtr->sensor.Valid(_ecm))
+	std::cout << "GstCamera::Configure() started \n" << std::endl;
+	auto cameraEntComp = _ecm.Component<components::Camera>(_entity);
+	if (!cameraEntComp)
 	{
-		gzerr << "GstCamera plugin should be attached to a sensor entity. "
+		gzerr << "GstCamera plugin should be attached to a camera entity. "
 			<< "Failed to initialize." << std::endl;
 		return;
 	}
 
-	this->dataPtr->sdfConfig = _sdf->Clone();
+	this->dataPtr->entity = _entity;
+	this->dataPtr->eventMgr = &_eventMgr;
+
+	// NOT SURE IF THIS IS NECESSARY AS I DON'T KNOW IF WE NEED TO GENERATE A NEW TOPIC
+	sdf::Sensor sensorSdf = cameraEntComp->Data();
+	std::string topic = sensorSdf.Topic();
+	if (topic.empty())
+	{
+		auto scoped = scopedName(_entity, _ecm);
+		topic = transport::TopicUtils::AsValidTopic(scoped + "/image");
+		if (topic.empty())
+		{
+		gzerr << "Failed to generate valid topic for entity [" << scoped
+				<< "]" << std::endl;
+		}
+	}
+	this->dataPtr->sensorTopic = topic;
 
 	// std::string parentName = _ecm.ComponentData<components::Name>(
 	// 	_parent->Data())->data;
 
-	// get scene
-	if (!this->scene)
-	{
-		this->scene = rendering::sceneFromFirstRenderEngine();
-	}
-
-	// return if scene not ready or no sensors available.
-	if (!this->scene->IsInitialized() ||
-		this->scene->SensorCount() == 0)
-	{
-		return;
-	}
-
 	// get camera
-    for (unsigned int i = 0; i < this->scene->NodeCount(); ++i)
-    {
-      auto cam = std::dynamic_pointer_cast<rendering::Camera>(
-        this->scene->NodeByIndex(i));
-      if (cam && cam->HasUserData("user-camera") &&
-          std::get<bool>(cam->UserData("user-camera")))
-      {
-        this->camera = cam;
-        gzdbg << "GstCamera plugin is using camera ["
-               << this->camera->Name() << "]" << std::endl;
-        break;
-      }
-    }
+    // for (unsigned int i = 0; i < this->scene->NodeCount(); ++i)
+    // {
+    //   auto cam = std::dynamic_pointer_cast<rendering::Camera>(
+    //     this->scene->NodeByIndex(i));
+    //   if (cam && cam->HasUserData("user-camera") &&
+    //       std::get<bool>(cam->UserData("user-camera")))
+    //   {
+    //     this->camera = cam;
+    //     gzdbg << "GstCamera plugin is using camera ["
+    //            << this->camera->Name() << "]" << std::endl;
+    //     break;
+    //   }
+    // }
 
-	this->width = this->camera->ImageWidth();
-	this->height = this->camera->ImageHeight();
-	this->frameformat = this->camera->ImageFormat();
-	this->depth = 0;
-	this->rate = 60.0;
-
-	this->udpHost = "127.0.0.1";
+	this->dataPtr->udpHost = "127.0.0.1";
 	const char *host_ip = std::getenv("PX4_VIDEO_HOST_IP");
 	if (host_ip) {
-		this->udpHost = std::string(host_ip);
+		this->dataPtr->udpHost = std::string(host_ip);
 	} else if (_sdf->HasElement("udpHost")) {
-		this->udpHost = _sdf->Get<std::string>("udpHost");
+		this->dataPtr->udpHost = _sdf->Get<std::string>("udpHost");
 	}
 
-	this->udpPort = 5600;
+	this->dataPtr->udpPort = 5600;
 	if (_sdf->HasElement("udpPort")) {
-		this->udpPort = _sdf->Get<int>("udpPort");
+		this->dataPtr->udpPort = _sdf->Get<int>("udpPort");
 	}
 
 	gzwarn << "[gst_camera_plugin] Streaming video to ip: " << this->udpHost << " port: "  << this->udpPort << std::endl;
 
 	if (_sdf->HasElement("rtmpLocation")) {
-		this->rtmpLocation = _sdf->Get<std::string>("rtmpLocation");
-		this->useRtmp = true;
+		this->dataPtr->rtmpLocation = _sdf->Get<std::string>("rtmpLocation");
+		this->dataPtr->useRtmp = true;
 	} else {
-		this->useRtmp = false;
+		this->dataPtr->useRtmp = false;
 	}
 
 	if (_sdf->HasElement("useCuda")) {
-		this->useCuda = _sdf->Get<bool>("useCuda");
+		this->dataPtr->useCuda = _sdf->Get<bool>("useCuda");
 	} else {
-		this->useCuda = false;
+		this->dataPtr->useCuda = false;
+	}
+}
+
+void GstCamera::PostUpdate(const UpdateInfo &_info,
+    const EntityComponentManager &_ecm)
+{
+	this->dataPtr->simTime = _info.simTime;
+	if (!this->dataPtr->cameraName.empty())
+		return;
+
+
+	this->dataPtr->cameraName =
+		removeParentScope(scopedName(this->dataPtr->entity, _ecm, "::", false),
+		"::");
+
+	if (this->dataPtr->cameraName.empty())
+    	return;
+
+	if (this->dataPtr->service.empty())
+	{
+		auto scoped = scopedName(this->dataPtr->entity, _ecm);
+		this->dataPtr->service = transport::TopicUtils::AsValidTopic(scoped +
+			this->mTopicName);
+		if (this->dataPtr->service.empty())
+		{
+		gzerr << "Failed to create valid service for [" << scoped << "]"
+				<< std::endl;
+		}
+		return;
 	}
 
-	// components::Camera *cameraComponent = nullptr;
-	// if(_ecm.EntityByComponents(components::Camera()) != kNullEntity){
-	// 	Entity cameraEntity = _ecm.EntityByComponents(components::Camera());
-	// 	cameraComponent = _ecm.Component<components::Camera>(cameraEntity);
-	// }
-	if (this->camera && this->camera->HasUserData("user-camera") &&
-          std::get<bool>(this->camera->UserData("user-camera")))
-		GstCamera::startStreaming();
-	else
-		GstCamera::stopStreaming();
+	// A node is required as this is what Gst listens to.
+	this->dataPtr->node.Advertise(this->dataPtr->service,
+       &GstCamera::cbVideoStream, this->dataPtr.get());
+  	gzmsg << "Video stream on ["
+       << this->dataPtr->service << "]" << std::endl;
 
-	// And start by default
-	GstCamera::startStreaming();
+	startStreaming();
 
 }
 
-GZ_ADD_PLUGIN(GstCamera, System, GstCamera::ISystemConfigure)
+GZ_ADD_PLUGIN(GstCamera,
+				System,
+				GstCamera::ISystemConfigure,
+				GstCamera::ISystemPostUpdate)
 GZ_ADD_PLUGIN_ALIAS(GstCamera, "gz::sim::systems::GstCamera")
